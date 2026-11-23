@@ -1,15 +1,9 @@
 #!/usr/bin/env node
 // 需要 Node >= 22.18（内置 TypeScript 类型擦除，零依赖）
-process.env.NODE_TLS_REJECT_UNAUTHORIZED ??= "0"; // OA 多为自签名 HTTPS
+import { fatal, getSession, loadConfig, printJson, request, respJson, respText, unwrap } from "./lib/session.mjs";
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
-const COOKIE_FILE = join(homedir(), ".cache", "ecology9-oa", "cookies.json");
-const TIMEOUT_MS = 30_000;
+type Config = { base: string; user: string; pass: string };
+type Session = Awaited<ReturnType<typeof getSession>>;
 
 const LIST_ENDPOINTS: Record<string, string> = {
   all: "getAllWorkflowRequestList",
@@ -20,149 +14,36 @@ const LIST_ENDPOINTS: Record<string, string> = {
   my: "getMyWorkflowRequestList",
 };
 
-type Config = { base: string; user: string; pass: string };
+// 服务端列表接口固定每页 10 条，count 参数被忽略；分页用 query 参数 pageNo（从 1 开始）
+const PAGE_SIZE = 10;
 
-class CookieJar {
-  private map = new Map<string, string>();
-
-  load(): boolean {
-    if (!existsSync(COOKIE_FILE)) return false;
-    try {
-      this.map = new Map(Object.entries(JSON.parse(readFileSync(COOKIE_FILE, "utf-8"))));
-      return this.map.size > 0;
-    } catch {
-      return false;
-    }
-  }
-
-  save(): void {
-    mkdirSync(dirname(COOKIE_FILE), { recursive: true });
-    writeFileSync(COOKIE_FILE, JSON.stringify(Object.fromEntries(this.map)));
-  }
-
-  header(): string {
-    return [...this.map.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-
-  storeFrom(resp: Response): void {
-    for (const sc of resp.headers.getSetCookie()) {
-      const pair = sc.split(";")[0];
-      const i = pair.indexOf("=");
-      if (i < 0) continue;
-      const name = pair.slice(0, i).trim();
-      const value = pair.slice(i + 1).trim();
-      if (!value || /expires=Thu, 01 Jan 1970/i.test(sc)) this.map.delete(name);
-      else this.map.set(name, value);
-    }
-  }
+function optValue(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  return i >= 0 ? args[i + 1] : undefined;
 }
 
-interface Session {
-  jar: CookieJar;
+async function fetchPage(s: Session, cfg: Config, endpoint: string, pageNo: number): Promise<any[]> {
+  const data = unwrap(
+    await respJson(await request(s, "POST", `${cfg.base}/api/workflow/paService/${endpoint}?pageNo=${pageNo}`, { json: {} })),
+  );
+  return data ?? [];
 }
 
-function newSession(): Session {
-  return { jar: new CookieJar() };
-}
-
-async function request(
+async function fetchPages(
   s: Session,
-  method: string,
-  url: string,
-  opts: { form?: Record<string, string>; json?: unknown } = {},
-): Promise<Response> {
-  const headers: Record<string, string> = {};
-  const cookie = s.jar.header();
-  if (cookie) headers.cookie = cookie;
-  let body: BodyInit | undefined;
-  const canHaveBody = method !== "GET" && method !== "HEAD";
-  if (opts.form && canHaveBody) {
-    headers["content-type"] = "application/x-www-form-urlencoded";
-    body = new URLSearchParams(opts.form).toString();
-  } else if (opts.json !== undefined && canHaveBody) {
-    headers["content-type"] = "application/json";
-    body = JSON.stringify(opts.json);
+  cfg: Config,
+  endpoint: string,
+  opts: { page?: number; all?: boolean; total?: number },
+): Promise<any[]> {
+  if (!opts.all) return fetchPage(s, cfg, endpoint, opts.page ?? 1);
+  const out: any[] = [];
+  const maxPage = opts.total ? Math.max(1, Math.ceil(opts.total / PAGE_SIZE)) : 100;
+  for (let p = 1; p <= maxPage; p++) {
+    const items = await fetchPage(s, cfg, endpoint, p);
+    out.push(...items);
+    if (items.length < PAGE_SIZE) break;
   }
-  const resp = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(TIMEOUT_MS) });
-  s.jar.storeFrom(resp);
-  return resp;
-}
-
-async function respText(resp: Response): Promise<string> {
-  const buf = await resp.arrayBuffer();
-  const utf8 = new TextDecoder("utf-8").decode(buf);
-  return utf8.includes("") ? new TextDecoder("gbk").decode(buf) : utf8;
-}
-
-async function respJson(resp: Response): Promise<any> {
-  try {
-    return await resp.json();
-  } catch {
-    fatal(`非 JSON 响应 (HTTP ${resp.status}): ${(await respText(resp)).slice(0, 300)}`);
-  }
-}
-
-function fatal(msg: string): never {
-  console.error(msg);
-  process.exit(1);
-}
-
-function unwrap(data: any): any {
-  if (data && typeof data === "object" && data.code !== undefined && data.code !== null && data.code !== "SUCCESS") {
-    fatal(`接口错误: ${JSON.stringify(data).slice(0, 800)}`);
-  }
-  return data;
-}
-
-function loadConfig(): Config {
-  const env = { base: process.env.OA_BASE, user: process.env.OA_USER, pass: process.env.OA_PASS };
-  const cfgPath = join(SKILL_DIR, "config.json");
-  let cfg: Record<string, string> = {};
-  if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-  const base = (env.base ?? cfg.base ?? "").replace(/\/+$/, "");
-  const user = env.user ?? cfg.user ?? "";
-  const pass = env.pass ?? cfg.pass ?? "";
-  const missing = [
-    ["OA_BASE", base],
-    ["OA_USER", user],
-    ["OA_PASS", pass],
-  ]
-    .filter(([, v]) => !v)
-    .map(([k]) => k);
-  if (missing.length) fatal(`缺少配置: ${missing.join(", ")}，请设置环境变量或创建 ${cfgPath}`);
-  return { base, user, pass };
-}
-
-async function webLogin(cfg: Config): Promise<Session> {
-  const s = newSession();
-  await request(s, "GET", `${cfg.base}/login/Login.jsp`);
-  const r = await request(s, "POST", `${cfg.base}/login/VerifyLogin.jsp`, {
-    form: { loginid: cfg.user, userpassword: cfg.pass, logintype: "1", isremember: "1" },
-  });
-  const text = await respText(r);
-  if (!text.includes("RemindLogin.jsp")) {
-    fatal(`网页登录失败（账号或密码错误？），VerifyLogin.jsp 返回片段: ${JSON.stringify(text.slice(0, 200))}`);
-  }
-  await request(s, "GET", `${cfg.base}/login/RemindLogin.jsp?RedirectFile=/wui/main.jsp`);
-  await request(s, "GET", `${cfg.base}/wui/main.jsp`);
-  await request(s, "GET", `${cfg.base}/wui/index.html`);
-  s.jar.save();
-  return s;
-}
-
-async function getSession(cfg: Config, force = false): Promise<Session> {
-  const s = newSession();
-  if (!force && s.jar.load()) {
-    try {
-      const r = await request(s, "GET", `${cfg.base}/api/hrm/user/currentUser`);
-      if (!(await respText(r)).includes("登录信息超时")) return s;
-    } catch {}
-  }
-  return webLogin(cfg);
-}
-
-function printJson(obj: unknown): void {
-  console.log(JSON.stringify(obj, null, 2));
+  return out;
 }
 
 const commands: Record<string, (args: string[], cfg: Config) => Promise<void>> = {
@@ -272,13 +153,22 @@ const commands: Record<string, (args: string[], cfg: Config) => Promise<void>> =
     printJson(data?.data ?? data);
   },
 
-  async todo(_args, cfg) {
+  async todo(args, cfg) {
+    const json = args.includes("--json");
+    const all = args.includes("--all");
+    const page = parseInt(optValue(args, "--page") ?? "1", 10);
     const s = await getSession(cfg);
-    const countResp = await request(s, "POST", `${cfg.base}/api/workflow/paService/getToDoWorkflowRequestCount`, { json: {} });
-    const count = (await respText(countResp)).trim();
-    const data = unwrap(await respJson(await request(s, "POST", `${cfg.base}/api/workflow/paService/getToDoWorkflowRequestList`, { json: {} })));
-    console.log(`# 待办 ${count} 条`);
-    for (const it of data ?? []) {
+    const total = parseInt(
+      (await respText(await request(s, "POST", `${cfg.base}/api/workflow/paService/getToDoWorkflowRequestCount`, { json: {} }))).trim(),
+      10,
+    );
+    const items = await fetchPages(s, cfg, "getToDoWorkflowRequestList", { page, all, total });
+    if (json) {
+      printJson(items);
+      return;
+    }
+    console.log(`# 待办 ${total} 条${all ? "" : ` (第 ${page}/${Math.max(1, Math.ceil(total / PAGE_SIZE))} 页)`}`);
+    for (const it of items) {
       console.log(
         `${it.requestId}\t${it.requestName}\t[${it.status}] 节点=${it.currentNodeName} 创建人=${it.creatorName} ${it.createTime}`,
       );
@@ -286,9 +176,17 @@ const commands: Record<string, (args: string[], cfg: Config) => Promise<void>> =
   },
 
   async list(args, cfg) {
+    const json = args.includes("--json");
+    const all = args.includes("--all");
+    const page = parseInt(optValue(args, "--page") ?? "1", 10);
+    const key = args.find((a) => !a.startsWith("--"))!;
     const s = await getSession(cfg);
-    const data = unwrap(await respJson(await request(s, "POST", `${cfg.base}/api/workflow/paService/${LIST_ENDPOINTS[args[0]]}`, { json: {} })));
-    for (const it of data ?? []) {
+    const items = await fetchPages(s, cfg, LIST_ENDPOINTS[key], { page, all });
+    if (json) {
+      printJson(items);
+      return;
+    }
+    for (const it of items) {
       console.log(`${it.requestId}\t${it.requestName}\t[${it.status}] 创建人=${it.creatorName} ${it.createTime}`);
     }
   },
@@ -297,10 +195,11 @@ const commands: Record<string, (args: string[], cfg: Config) => Promise<void>> =
     const s = await getSession(cfg);
     const [method, path, body] = args;
     const r = await request(s, method.toUpperCase(), `${cfg.base}${path}`, { json: body ? JSON.parse(body) : {} });
+    const text = await respText(r);
     try {
-      printJson(await r.json());
+      printJson(JSON.parse(text));
     } catch {
-      console.log(await respText(r));
+      console.log(text);
     }
   },
 };

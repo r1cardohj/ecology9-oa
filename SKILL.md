@@ -23,9 +23,12 @@ node scripts/oa.ts create \
   --workflow-id 1136 --title "会议申请单-张三-20261123" \
   --field name "测试会议" --field begindate 2026-11-24 --field hrmmembers 1234
 node scripts/oa.ts get <requestId>           # 流程详情（字段值、当前节点、状态）
-node scripts/oa.ts todo                      # 待办（含数量）
-node scripts/oa.ts list processed            # 已办；可选 all/doing/toread/cc/my
-node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任意接口兜底
+node scripts/oa.ts todo [--all|--page N] [--json]   # 待办（--all 翻页取全量，默认只第 1 页）
+node scripts/oa.ts list processed [--all|--page N]   # 已办；可选 all/doing/toread/cc/my
+node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任意接口兜底（GET/POST 均可，path 可带 query string）
+
+# 会话/请求层已抽为 scripts/lib/session.mjs，可 import 复用：
+#   import { getSession, loadConfig, request, respJson } from "./scripts/lib/session.mjs";
 ```
 
 ## 发起流程步骤
@@ -52,7 +55,7 @@ node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任
 
 ## 环境实际探测结论（2026-11，某 E9 实例；示例中的人名/工号/人员 id 均为脱敏示例，需按实际环境替换）
 
-- SOAP `/services/*`：DocService.login(user, pass, 0, "zh_CN") 可用；WorkflowService 的列表/计数方法一律 HTTP 500 空响应（服务端实现问题），勿用
+- 列表类接口分页：POST body 带 `{}`，分页用 **query 参数 `?pageNo=N`**（从 1 开始）；`count`/`currentPage`/`page` 等参数均被服务端忽略，每页固定 10 条
 - REST `/api/workflow/paService/` 可用：getCreateWorkflowList、getCreateWorkflowTypeList、getToDoWorkflowRequestList(Count)、getAllWorkflowRequestList、getDoingWorkflowRequestList、getProcessedWorkflowRequestList、getToBeReadWorkflowRequestList、getCCWorkflowRequestList、getMyWorkflowRequestList、getCreateWorkflowCount、**getWorkflowRequest(GET)**、**getCreateWorkflowRequestInfo(GET)**、**doCreateRequest(POST)**、submitRequest
 - doCreateRequest 参数：`{"workflowId": "...", "requestName": "...", "mainData": [{"fieldName": "...", "fieldValue": "..."}]}`
 - getCreateWorkflowRequestInfo 参数：query string `?workflowId=xxx`（POST 会 405）
