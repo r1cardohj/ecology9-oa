@@ -24,6 +24,8 @@ node scripts/oa.ts create \
   --field name "测试会议" --field begindate 2026-11-24 --field hrmmembers 1234
 node scripts/oa.ts get <requestId>           # 流程详情（字段值、当前节点、状态）
 node scripts/oa.ts submit <requestId> --field kffa "方案内容" --remark "审批意见" [--dry-run]  # 填字段并提交待办；--dry-run 只打印提交体不真正提交
+node scripts/oa.ts submit <requestId> --field kffa "方案内容" --remark "审批意见" [--dry-run]  # 填字段并提交待办；--dry-run 只打印提交体不真正提交
+node scripts/oa.ts kq [YYYY-MM] [--json]   # 我的打卡月历（默认当月；POST form: typevalue=月份&loaddata=1&type=2）
 node scripts/oa.ts todo [--all|--page N] [--json]   # 待办（--all 翻页取全量，默认只第 1 页）
 node scripts/oa.ts list processed [--all|--page N]   # 已办；可选 all/doing/toread/cc/my
 node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任意接口兜底（GET/POST 均可，path 可带 query string）
