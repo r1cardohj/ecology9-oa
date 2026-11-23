@@ -5,27 +5,27 @@ description: 操作泛微 E-cology 9 OA：网页登录、查询可发起流程�
 
 # 泛微 E-cology 9 OA REST 工具
 
-通过 `scripts/oa.py` 调用 E9 的 `/api/workflow/paService/*` REST 接口，认证方式是**网页登录拿会话 cookie**（不是 SOAP，不是 appid token——实测这套环境的 `/services/WorkflowService` 列表方法服务端 500 不可用，`/api/*` 无 token 体系）。
+通过 `scripts/oa.ts` 调用（Node >= 22.18 零依赖，直接 `node` 运行） E9 的 `/api/workflow/paService/*` REST 接口，认证方式是**网页登录拿会话 cookie**（不是 SOAP，不是 appid token——实测这套环境的 `/services/WorkflowService` 列表方法服务端 500 不可用，`/api/*` 无 token 体系）。
 
 ## 配置
 
-复制 `config.example.json` 为 `config.json` 并填写，或用环境变量 `OA_BASE` / `OA_USER` / `OA_PASS`（环境变量优先）。cookie 缓存在 `~/.cache/ecology9-oa/cookies.txt`，失效自动重新登录。
+复制 `config.example.json` 为 `config.json` 并填写，或用环境变量 `OA_BASE` / `OA_USER` / `OA_PASS`（环境变量优先）。cookie 缓存在 `~/.cache/ecology9-oa/cookies.json`，失效自动重新登录。
 
 ## 常用命令
 
 ```bash
 cd <skill目录>
 
-uv run scripts/oa.py login                     # 强制重新登录
-uv run scripts/oa.py workflows                 # 可发起的流程列表（workflowId/类型/名称）
-uv run scripts/oa.py fields <workflowId>       # 表单字段明细（发起前必看！）
-uv run scripts/oa.py create \
+node scripts/oa.ts login                     # 强制重新登录
+node scripts/oa.ts workflows                 # 可发起的流程列表（workflowId/类型/名称）
+node scripts/oa.ts fields <workflowId>       # 表单字段明细（发起前必看！）
+node scripts/oa.ts create \
   --workflow-id 1136 --title "会议申请单-张三-20261123" \
   --field name "测试会议" --field begindate 2026-11-24 --field hrmmembers 1234
-uv run scripts/oa.py get <requestId>           # 流程详情（字段值、当前节点、状态）
-uv run scripts/oa.py todo                      # 待办（含数量）
-uv run scripts/oa.py list processed            # 已办；可选 all/doing/toread/cc/my
-uv run scripts/oa.py api POST /api/workflow/paService/submitRequest '{...}'  # 任意接口兜底
+node scripts/oa.ts get <requestId>           # 流程详情（字段值、当前节点、状态）
+node scripts/oa.ts todo                      # 待办（含数量）
+node scripts/oa.ts list processed            # 已办；可选 all/doing/toread/cc/my
+node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任意接口兜底
 ```
 
 ## 发起流程步骤
@@ -44,9 +44,9 @@ uv run scripts/oa.py api POST /api/workflow/paService/submitRequest '{...}'  # �
 - 这些值从哪来：用 `get` 读本人一条历史同类型流程照抄（`fields` 里只读字段的默认值也是来源）
 - `qjlx` 标了"不支持"但实际可赋值（15=调休）
 - 完整例子：
-  `uv run scripts/oa.py create --workflow-id 1972 --title "请假申请单-张三-2026-11-20" --field tx 5 --field sqraqjb 10 --field sfzj 1 --field gh A0000 --field sqr 1234 --field sqbm 61 --details-json '[{"xm":"1234","gh":"A0000","bm":"61","qjlx":"15","ksrq":"2026-11-20","kssj":"08:00","jsrq":"2026-11-20","jssj":"17:00","qjdd":"0","qjsy":"家中有事"}]'`
+  `node scripts/oa.ts create --workflow-id 1972 --title "请假申请单-张三-2026-11-20" --field tx 5 --field sqraqjb 10 --field sfzj 1 --field gh A0000 --field sqr 1234 --field sqbm 61 --details-json '[{"xm":"1234","gh":"A0000","bm":"61","qjlx":"15","ksrq":"2026-11-20","kssj":"08:00","jsrq":"2026-11-20","jssj":"17:00","qjdd":"0","qjsy":"家中有事"}]'`
 - 创建成功即提交（doCreateRequest 无草稿模式），按出口条件自动路由（安全级别10 走 直属上司）
-- 想撤掉：`uv run scripts/oa.py api POST /api/workflow/reqform/requestWithdraw '{"requestid":"..."}'` 或网页端撤回
+- 想撤掉：`node scripts/oa.ts api POST /api/workflow/reqform/requestWithdraw '{"requestid":"..."}'` 或网页端撤回
    - 标注 `*不支持API赋值` 的字段（fieldShowValue 为 `[该字段暂不支持]`）**传了也没用**，这类流程可能无法通过 API 发起，需实测（有些必填但不校验，如会议申请单）
 4. 成功输出 `requestId`；失败会打印服务端错误（常见 `LINK_CONDITION_NOT_MET` 出口条件不满足 = 某条件字段没传值，错误详情里会写明缺哪个字段）
 
