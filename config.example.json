@@ -1,0 +1,5 @@
+{
+  "base": "http://oa.example.com",
+  "user": "登录账号",
+  "pass": "登录密码"
+}

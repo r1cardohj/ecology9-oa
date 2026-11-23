@@ -1,0 +1,9 @@
+{
+  "name": "ecology9-oa",
+  "version": "0.1.0",
+  "description": "Agent skill for operating Weaver E-cology 9 OA via its REST API",
+  "keywords": ["pi-package"],
+  "pi": {
+    "skills": ["."]
+  }
+}
