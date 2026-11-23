@@ -245,6 +245,32 @@ const commands: Record<string, (args: string[], cfg: Config) => Promise<void>> =
     }
   },
 
+  async kq(args, cfg) {
+    const json = args.includes("--json");
+    const month = args.find((a) => !a.startsWith("--")) ?? new Date().toISOString().slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) fatal(`月份格式应为 YYYY-MM，收到: ${month}`);
+    const s = await getSession(cfg);
+    const data = await respJson(
+      await request(s, "POST", `${cfg.base}/api/kq/myattendance/getHrmKQMonthReportInfo`, {
+        form: { typevalue: month, loaddata: "1", type: "2" },
+      }),
+    );
+    if (json) {
+      printJson(data);
+      return;
+    }
+    const TYPE_NAMES: Record<string, string> = { NORMAL: "正常", ABSENT: "异常", NOSIGN: "缺卡" };
+    const days = Object.values(data?.result ?? {}).sort((a: any, b: any) => a.date.localeCompare(b.date));
+    console.log(`# ${data?.title ?? "我的打卡月历"} ${month}（共 ${days.length} 天）`);
+    for (const d of days as any[]) {
+      if (!d.isWorkDay) continue;
+      const signs = (d.signInfo ?? []).map((x: any) => `${x.title.replace("打卡", "")}${x.signTime}`).join(" ");
+      const types = (d.types ?? []).map((t: string) => TYPE_NAMES[t] ?? t).join(",");
+      const flag = (d.types ?? []).length && !(d.types ?? []).includes("NORMAL") ? " ⚠️" : "";
+      console.log(`${d.date} ${signs || "无打卡"}${types ? ` [${types}]` : ""}${flag}`);
+    }
+  },
+
   async api(args, cfg) {
     const s = await getSession(cfg);
     const [method, path, body] = args;
