@@ -145,6 +145,60 @@ const commands: Record<string, (args: string[], cfg: Config) => Promise<void>> =
     console.log(typeof result === "object" ? result?.requestid : result);
   },
 
+  async submit(args, cfg) {
+    const opt = (name: string) => {
+      const i = args.indexOf(name);
+      return i >= 0 ? args[i + 1] : undefined;
+    };
+    const dryRun = args.includes("--dry-run");
+    const remark = opt("--remark") ?? "";
+    const fields: [string, string][] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--field") fields.push([args[i + 1], args[i + 2]]);
+    }
+    const requestId = args.find((a) => !a.startsWith("--"))!;
+    if (!fields.length && !remark) fatal("至少传一个 --field 或 --remark");
+    const s = await getSession(cfg);
+    const data = unwrap(
+      await respJson(await request(s, "GET", `${cfg.base}/api/workflow/paService/getWorkflowRequest?requestId=${encodeURIComponent(requestId)}`)),
+    );
+    const info = data?.data ?? data;
+    const mainFields = info?.workflowMainTableInfo?.requestRecords?.flatMap((r: any) => r.workflowRequestTableFields ?? []) ?? [];
+    for (const [name, value] of fields) {
+      const f = mainFields.find((x: any) => x.fieldName === name || String(x.fieldId) === name);
+      if (!f) fatal(`字段不存在: ${name}`);
+      if (!f.edit) fatal(`字段 ${name}(${f.fieldShowName}) 当前节点不可编辑`);
+      f.fieldValue = value;
+      f.fieldShowValue = value;
+    }
+    // submitRequest 用 doCreateRequest 同族的 mainData/detailData 格式；requestname/requestlevel/messageType 等系统字段放进去会 SAVE_MAIN_TABLE_FAIL
+    const SKIP = new Set(["requestname", "requestlevel", "messageType"]);
+    const payload: Record<string, unknown> = {
+      requestId: String(requestId),
+      mainData: mainFields
+        .filter((f: any) => !SKIP.has(f.fieldName))
+        .map((f: any) => ({ fieldName: f.fieldName, fieldValue: String(f.fieldValue ?? "") })),
+      detailData: (info.workflowDetailTableInfos ?? []).map((dt: any) => ({
+        tableDBName: dt.tableDBName,
+        workflowRequestTableRecords: (dt.workflowRequestTableRecords ?? []).map((rec: any, i: number) => ({
+          recordOrder: i,
+          workflowRequestTableFields: (rec.workflowRequestTableFields ?? []).map((f: any) => ({
+            fieldName: f.fieldName,
+            fieldValue: String(f.fieldValue ?? ""),
+          })),
+        })),
+      })),
+      otherParams: {},
+      remark,
+    };
+    if (dryRun) {
+      printJson(payload);
+      return;
+    }
+    const result = unwrap(await respJson(await request(s, "POST", `${cfg.base}/api/workflow/paService/submitRequest`, { json: payload })));
+    console.log(result?.data ?? result);
+  },
+
   async get(args, cfg) {
     const s = await getSession(cfg);
     const data = unwrap(

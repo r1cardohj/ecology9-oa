@@ -23,6 +23,7 @@ node scripts/oa.ts create \
   --workflow-id 1136 --title "会议申请单-张三-20261123" \
   --field name "测试会议" --field begindate 2026-11-24 --field hrmmembers 1234
 node scripts/oa.ts get <requestId>           # 流程详情（字段值、当前节点、状态）
+node scripts/oa.ts submit <requestId> --field kffa "方案内容" --remark "审批意见" [--dry-run]  # 填字段并提交待办；--dry-run 只打印提交体不真正提交
 node scripts/oa.ts todo [--all|--page N] [--json]   # 待办（--all 翻页取全量，默认只第 1 页）
 node scripts/oa.ts list processed [--all|--page N]   # 已办；可选 all/doing/toread/cc/my
 node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任意接口兜底（GET/POST 均可，path 可带 query string）
@@ -57,6 +58,7 @@ node scripts/oa.ts api POST /api/workflow/paService/submitRequest '{...}'  # 任
 
 - 列表类接口分页：POST body 带 `{}`，分页用 **query 参数 `?pageNo=N`**（从 1 开始）；`count`/`currentPage`/`page` 等参数均被服务端忽略，每页固定 10 条
 - REST `/api/workflow/paService/` 可用：getCreateWorkflowList、getCreateWorkflowTypeList、getToDoWorkflowRequestList(Count)、getAllWorkflowRequestList、getDoingWorkflowRequestList、getProcessedWorkflowRequestList、getToBeReadWorkflowRequestList、getCCWorkflowRequestList、getMyWorkflowRequestList、getCreateWorkflowCount、**getWorkflowRequest(GET)**、**getCreateWorkflowRequestInfo(GET)**、**doCreateRequest(POST)**、submitRequest
+- **submitRequest 实测格式（2026-11-23，requestId=913542 请假单重新提交成功，已流转到下一节点）**：body 为 `{"requestId":"..","mainData":[{fieldName,fieldValue}],"detailData":[{tableDBName,workflowRequestTableRecords:[{recordOrder,workflowRequestTableFields:[{fieldName,fieldValue}]}]}],"otherParams":{},"remark":".."}`，与 doCreateRequest 同族；`requestname`/`requestlevel`/`messageType` 系统字段放进 mainData 会 SAVE_MAIN_TABLE_FAIL；把 getWorkflowRequest 的 WorkflowRequestInfo 完整结构回传则报 PARAM_ERROR(errorParam_requestid)
 - doCreateRequest 参数：`{"workflowId": "...", "requestName": "...", "mainData": [{"fieldName": "...", "fieldValue": "..."}]}`
 - getCreateWorkflowRequestInfo 参数：query string `?workflowId=xxx`（POST 会 405）
 - getWorkflowRequest 参数：query string `?requestId=xxx`
